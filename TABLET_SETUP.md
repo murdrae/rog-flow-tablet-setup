@@ -36,6 +36,7 @@ This document provides a comprehensive record of all configurations, custom scri
    * **Corner Double-Tap to Close**: Quickly double-tapping the top-right 65×65px corner instantly closes the active window (`hl.dsp.window.close()`).
    * **Zero App Conflict**: Single taps and touches below the top 60px pass directly into apps with zero interference.
    * **Dynamic Rotation**: Works across all display rotations/transforms on `eDP-1`.
+   * **Theme-Aware Notifications**: Notification pills dynamically adapt in real-time to match the active Omarchy theme colors (accent, success green, alert red).
 4. **Battery Health Optimization:**
    * Charge limit set to **60%** to avoid cell degradation while docked.
    * Persisted via `asusd` (`asusctl battery limit 60`).
@@ -224,6 +225,7 @@ Touch Window Drag & Close Daemon for Hyprland on ASUS ROG Flow Z13.
 Features:
 1. Hold still in the top strip (60px) for 300ms to grab and drag/swap windows.
 2. Double-tap the top-right corner (65x65px) to close the active window.
+3. Automatically adapts notification colors to the active Omarchy theme.
 """
 
 import os
@@ -248,9 +250,42 @@ DOUBLE_TAP_MAX_DELAY = 0.35    # Max time between taps for a double-tap (350ms)
 DEBUG_LOGS = True              # Print debug logs to journal
 # =================================================
 
+_cached_theme_colors = None
+_cached_theme_mtime = 0.0
+
 def log(msg):
     if DEBUG_LOGS:
         print(f"[TouchDrag] {msg}", flush=True)
+
+def get_theme_colors():
+    """Dynamically load colors from the active Omarchy theme."""
+    global _cached_theme_colors, _cached_theme_mtime
+    colors_path = os.path.expanduser("~/.local/state/omarchy/current/theme/colors.toml")
+
+    try:
+        if os.path.exists(colors_path):
+            mtime = os.path.getmtime(colors_path)
+            if _cached_theme_colors and mtime == _cached_theme_mtime:
+                return _cached_theme_colors
+
+            colors = {"accent": "rgb(7aa2f7)", "red": "rgb(f7768e)", "green": "rgb(9ece6a)"}
+            with open(colors_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if "=" in line and not line.startswith("#"):
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip().strip('"').strip("'")
+                        if v.startswith("#") and len(v) == 7:
+                            colors[k] = f"rgb({v[1:]})"
+
+            _cached_theme_colors = colors
+            _cached_theme_mtime = mtime
+            return colors
+    except Exception:
+        pass
+
+    return {"accent": "rgb(7aa2f7)", "red": "rgb(f7768e)", "green": "rgb(9ece6a)"}
 
 def get_hypr_socket_path():
     uid = str(os.getuid())
@@ -286,7 +321,9 @@ def hypr_ipc(cmd: str, timeout: float = 0.5) -> str:
     except Exception:
         return ""
 
-def hypr_notify(msg: str, ms: int = 800, color: str = "rgb(88c0d0)"):
+def hypr_notify(msg: str, ms: int = 800, color_type: str = "accent"):
+    colors = get_theme_colors()
+    color = colors.get(color_type, colors.get("accent", "rgb(7aa2f7)"))
     hypr_ipc(f"notify 0 {ms} {color} {msg}")
 
 def get_active_window():
@@ -449,9 +486,9 @@ class TouchWindowDragManager:
             self.grabbed_window_addr = win.get("address")
 
         if self.is_floating:
-            hypr_notify("✥ Move Window (Drag freely)", ms=1000)
+            hypr_notify("✥ Move Window (Drag freely)", ms=1000, color_type="accent")
         else:
-            hypr_notify("✥ Move Tile (Drag toward target)", ms=1000)
+            hypr_notify("✥ Move Tile (Drag toward target)", ms=1000, color_type="accent")
 
         log(f"Grab active! Window stays {mode_str}.")
 
@@ -538,14 +575,14 @@ class TouchWindowDragManager:
                     if dx >= TILE_SWAP_THRESHOLD_PX:
                         log("Tiled drag -> swap right")
                         hypr_ipc('eval return hl.dispatch(hl.dsp.window.swap({ direction = "r" }))')
-                        hypr_notify("✥ Swapped Right", ms=400)
+                        hypr_notify("✥ Swapped Right", ms=400, color_type="accent")
                         self.tile_drag_origin_x = cx
                         self.tile_drag_origin_y = cy
                         self.last_swap_time = now
                     elif dx <= -TILE_SWAP_THRESHOLD_PX:
                         log("Tiled drag -> swap left")
                         hypr_ipc('eval return hl.dispatch(hl.dsp.window.swap({ direction = "l" }))')
-                        hypr_notify("✥ Swapped Left", ms=400)
+                        hypr_notify("✥ Swapped Left", ms=400, color_type="accent")
                         self.tile_drag_origin_x = cx
                         self.tile_drag_origin_y = cy
                         self.last_swap_time = now
@@ -553,14 +590,14 @@ class TouchWindowDragManager:
                     if dy >= TILE_SWAP_THRESHOLD_PX:
                         log("Tiled drag -> swap down")
                         hypr_ipc('eval return hl.dispatch(hl.dsp.window.swap({ direction = "d" }))')
-                        hypr_notify("✥ Swapped Down", ms=400)
+                        hypr_notify("✥ Swapped Down", ms=400, color_type="accent")
                         self.tile_drag_origin_x = cx
                         self.tile_drag_origin_y = cy
                         self.last_swap_time = now
                     elif dy <= -TILE_SWAP_THRESHOLD_PX:
                         log("Tiled drag -> swap up")
                         hypr_ipc('eval return hl.dispatch(hl.dsp.window.swap({ direction = "u" }))')
-                        hypr_notify("✥ Swapped Up", ms=400)
+                        hypr_notify("✥ Swapped Up", ms=400, color_type="accent")
                         self.tile_drag_origin_x = cx
                         self.tile_drag_origin_y = cy
                         self.last_swap_time = now
@@ -578,7 +615,7 @@ class TouchWindowDragManager:
                 log("Touch released; window placement complete")
                 self.is_grabbed = False
                 self.grabbed_window_addr = None
-                hypr_notify("✓ Placed", ms=400, color="rgb(a3be8c)")
+                hypr_notify("✓ Placed", ms=400, color_type="green")
                 return
 
         # Check for Double-Tap in Top-Right Corner (quick tap, timer didn't expire, didn't grab)
@@ -587,7 +624,7 @@ class TouchWindowDragManager:
             if (now - self.last_corner_tap_time) <= DOUBLE_TAP_MAX_DELAY and self.last_corner_tap_addr == win_addr:
                 log("Double-tap in top-right corner -> Closing window!")
                 hypr_ipc('eval return hl.dispatch(hl.dsp.window.close())')
-                hypr_notify("✕ Closed Window", ms=600, color="rgb(bf616a)")
+                hypr_notify("✕ Closed Window", ms=600, color_type="red")
                 self.last_corner_tap_time = 0.0
                 self.last_corner_tap_addr = None
             else:
