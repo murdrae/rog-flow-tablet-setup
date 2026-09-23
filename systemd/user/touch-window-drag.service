@@ -1,11 +1,11 @@
 [Unit]
-Description=Touchscreen Gestures Daemon
+Description=Touchscreen Window Drag Daemon for Hyprland
 PartOf=graphical-session.target
 After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 %h/.config/hypr/touch_gestures.py
+ExecStart=/usr/bin/python3 %h/.config/hypr/touch_window_drag.py
 Restart=always
 RestartSec=2
 

@@ -29,11 +29,12 @@ This document provides a comprehensive record of all configurations, custom scri
    * **Unused Keys Removed:** Unnecessary `Cmp` (Compose), `AGr` (AltGr), and duplicate right `Ctrl` removed.
    * Toggled via the tablet physical side button (`XF86Launch3`).
    * `SUPER + B` is mapped to toggle the status bar Bitwarden vault plugin (`io.github.elevate08.qs-bitwarden-cli`).
-3. **Multi-Touch Gestures Daemon:**
-   * 4-finger swipes: Switch workspaces, toggle fullscreen, toggle floating/tiling.
-   * 3-finger swipes: Directional focus movement (left, right, down, up).
-   * 5-finger pinch/tap: Close active window.
-   * Dynamic rotation compensation: Swiping physically "up" is always visually "up", even when rotated portrait or inverted.
+3. **Touch Window Drag Daemon:**
+   * **Hold to Grab**: Press and hold still in the top ~60px header strip of any window for 300ms.
+   * **Tiled Windows**: Dragging toward an adjacent window (left, right, up, down) swaps tiles directly in the layout tree (via native `hl.dsp.window.swap`). Windows remain 100% tiled.
+   * **Floating Windows**: Drags smoothly across screen by pixel coordinates.
+   * **Zero App Conflict**: Quick taps (<300ms) and all touches below the top 60px pass directly into apps with zero interference.
+   * **Dynamic Rotation**: Works across all display rotations/transforms on `eDP-1`.
 4. **Battery Health Optimization:**
    * Charge limit set to **80%** to avoid cell degradation.
    * Persisted via `asusd` (`asusctl battery limit 80`).
@@ -41,19 +42,17 @@ This document provides a comprehensive record of all configurations, custom scri
 
 ---
 
-## 3. Gesture Cheat Sheet
+## 3. Touch Window Drag Cheat Sheet
 
-| Gesture | Action | Dispatched Command |
+| Action | Target | Behavior |
 | :--- | :--- | :--- |
-| **4 Fingers Swipe Left** | Switch to Next Workspace | `hl.dsp.focus({ workspace = "r+1" })` |
-| **4 Fingers Swipe Right** | Switch to Previous Workspace | `hl.dsp.focus({ workspace = "r-1" })` |
-| **4 Fingers Swipe Down** | Fullscreen / Restore Window | `hl.dsp.window.fullscreen({ mode = 1 })` |
-| **4 Fingers Swipe Up** | Toggle Floating / Tiling Window | `hl.dsp.window.float({ action = "toggle" })` |
-| **3 Fingers Swipe Left** | Move Focus Left | `hl.dsp.focus({ direction = "l" })` |
-| **3 Fingers Swipe Right** | Move Focus Right | `hl.dsp.focus({ direction = "r" })` |
-| **3 Fingers Swipe Down** | Move Focus Down | `hl.dsp.focus({ direction = "d" })` |
-| **3 Fingers Swipe Up** | Move Focus Up | `hl.dsp.focus({ direction = "u" })` |
-| **5 Fingers Tap or Pinch** | Close Active Window | `hl.dsp.window.close()` |
+| **Hold Top 60px (300ms)** | Active Window | Grabs window and displays `✥ Move Tile` or `✥ Move Window` notification |
+| **Drag Left / Right** | Tiled Window | Swaps tile with neighbor window (`hl.dsp.window.swap`) |
+| **Drag Up / Down** | Tiled Window | Swaps tile vertically with neighbor window |
+| **Drag Anywhere** | Floating Window | Freely repositions window across canvas coordinates |
+| **Lift Finger** | Active Drag | Drops window in place with `✓ Placed` confirmation |
+| **Quick Tap (<300ms)** | Window Header | Normal in-app click (switches tabs, clicks buttons, focuses window) |
+| **Touch Body (>60px)** | Anywhere in App | Normal in-app interaction (scroll, type, zoom, select) |
 
 ---
 
@@ -206,109 +205,376 @@ o.bind("XF86Launch3", "Toggle virtual keyboard", "pkill -x wvkbd-deskintl || pki
 
 ---
 
-### Step 6: Install Multi-Touch Gestures Daemon
+### Step 6: Install Touch Window Drag Daemon
 
-#### A. Create `~/.config/hypr/touch_gestures.py`
+#### A. Create `~/.config/hypr/touch_window_drag.py`
 
 ```bash
-cat << 'EOF' > ~/.config/hypr/touch_gestures.py
+cat << 'EOF' > ~/.config/hypr/touch_window_drag.py
 #!/usr/bin/env python3
+"""
+Touch Window Drag Daemon for Hyprland on ASUS ROG Flow Z13.
+
+Allows moving windows within the tiling layout or floating coordinates
+without a title bar by holding still in the top strip for 300ms.
+"""
+
 import os
 import sys
 import time
 import json
-import subprocess
+import math
+import socket
+import threading
 from evdev import InputDevice, list_devices, ecodes
 
-# Swipe threshold in raw digitizer units (~15mm on a 3408x2064 panel)
-THRESHOLD = 180
+# ================= Configuration =================
+HOLD_DURATION_SEC = 0.30       # Hold time required to initiate grab (300ms)
+TOP_MARGIN_PX = 60             # Height of top grab strip (in logical pixels)
+JITTER_THRESHOLD_PX = 40.0     # Allowable finger drift during hold (contact settling)
+TILE_SWAP_THRESHOLD_PX = 45.0  # Drag distance to trigger a swap in the tiling grid
+DEBUG_LOGS = True              # Print debug logs to journal
+# =================================================
 
-def find_real_touch_device():
-    """Scan and match the physical touchscreen panel."""
+def log(msg):
+    if DEBUG_LOGS:
+        print(f"[TouchDrag] {msg}", flush=True)
+
+def get_hypr_socket_path():
+    uid = str(os.getuid())
+    sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    if not sig:
+        hypr_dir = f"/run/user/{uid}/hypr"
+        if os.path.exists(hypr_dir):
+            sigs = [s for s in os.listdir(hypr_dir) if not s.endswith(('.lock', '.sock'))]
+            if sigs:
+                sig = sigs[0]
+    if not sig:
+        return None
+    return f"/run/user/{uid}/hypr/{sig}/.socket.sock"
+
+def hypr_ipc(cmd: str, timeout: float = 0.5) -> str:
+    sock_path = get_hypr_socket_path()
+    if not sock_path or not os.path.exists(sock_path):
+        return ""
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        s.connect(sock_path)
+        s.sendall(cmd.encode("utf-8"))
+        s.shutdown(socket.SHUT_WR)
+        chunks = []
+        while True:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        s.close()
+        return b"".join(chunks).decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+def hypr_notify(msg: str, ms: int = 800, color: str = "rgb(88c0d0)"):
+    hypr_ipc(f"notify 0 {ms} {color} {msg}")
+
+def get_active_window():
+    res = hypr_ipc("j/activewindow")
+    if not res:
+        return None
+    try:
+        win = json.loads(res)
+        if win and "at" in win and "size" in win:
+            return win
+    except Exception:
+        pass
+    return None
+
+def get_edp1_monitor():
+    res = hypr_ipc("j/monitors")
+    if not res:
+        return None
+    try:
+        monitors = json.loads(res)
+        for m in monitors:
+            if m.get("name") == "eDP-1":
+                return m
+        for m in monitors:
+            if m.get("focused"):
+                return m
+    except Exception:
+        pass
+    return None
+
+def find_touchscreen_device():
     for path in list_devices():
         try:
             dev = InputDevice(path)
             caps = dev.capabilities()
             if ecodes.EV_ABS in caps:
-                abs_codes = [code for code, _ in caps[ecodes.EV_ABS]]
-                if ecodes.ABS_MT_POSITION_X in abs_codes:
-                    return path, dev.name
+                abs_codes = [c for c, _ in caps[ecodes.EV_ABS]]
+                if ecodes.ABS_MT_POSITION_X in abs_codes and ecodes.ABS_MT_POSITION_Y in abs_codes:
+                    x_info = dev.absinfo(ecodes.ABS_MT_POSITION_X)
+                    y_info = dev.absinfo(ecodes.ABS_MT_POSITION_Y)
+                    return path, dev.name, x_info.max, y_info.max
         except Exception:
             continue
-    return None, None
+    return None, None, 3408, 2064
 
-def get_monitor_transform():
-    """Fetch current monitor transform from Hyprland."""
-    try:
-        res = subprocess.run(['hyprctl', 'monitors', '-j'], capture_output=True, text=True, timeout=1)
-        if res.returncode == 0:
-            monitors = json.loads(res.stdout)
-            for m in monitors:
-                if m.get('name') == 'eDP-1' or m.get('focused'):
-                    return m.get('transform', 0)
-    except Exception:
-        pass
-    return 0
+class TouchWindowDragManager:
+    def __init__(self, raw_max_x, raw_max_y):
+        self.raw_max_x = float(raw_max_x) or 3408.0
+        self.raw_max_y = float(raw_max_y) or 2064.0
 
-def adjust_for_transform(dx, dy, transform):
-    """Adjust physical swipe vectors according to screen rotation."""
-    if transform == 1:       # 90 deg clockwise
-        return dy, -dx
-    elif transform == 2:     # 180 deg
-        return -dx, -dy
-    elif transform == 3:     # 270 deg
-        return -dy, dx
-    return dx, dy            # 0 normal
+        self.slots = {}
+        self.current_slot = 0
 
-def send_hypr_dispatch(lua_cmd, log_msg=""):
-    """Dispatch Hyprland Lua command with proper environment."""
-    env = os.environ.copy()
-    uid = str(os.getuid())
-    env['XDG_RUNTIME_DIR'] = f"/run/user/{uid}"
-    hypr_dir = f"/run/user/{uid}/hypr/"
-    if os.path.exists(hypr_dir):
-        sigs = [s for s in os.listdir(hypr_dir) if not s.endswith(('.lock', '.sock'))]
-        if sigs:
-            env['HYPRLAND_INSTANCE_SIGNATURE'] = sigs[0]
+        self.timer = None
+        self.state_lock = threading.Lock()
 
-    if 'WAYLAND_DISPLAY' not in env:
-        env['WAYLAND_DISPLAY'] = 'wayland-1'
+        self.is_grabbed = False
+        self.is_floating = False
+        self.grabbed_window_addr = None
 
-    res = subprocess.run(['hyprctl', 'dispatch', lua_cmd], env=env, capture_output=True, text=True)
-    if res.returncode == 0:
-        if log_msg:
-            print(f"[Gesture] {log_msg} -> {res.stdout.strip()}", flush=True)
-    else:
-        print(f"[Gesture Error] {lua_cmd} -> {res.stderr.strip()}", flush=True)
+        self.start_canvas_x = 0.0
+        self.start_canvas_y = 0.0
+        self.current_canvas_x = 0.0
+        self.current_canvas_y = 0.0
+
+        # For floating window dragging
+        self.offset_x = 0.0
+        self.offset_y = 0.0
+        self.last_dispatched_x = 0
+        self.last_dispatched_y = 0
+        self.last_dispatch_time = 0.0
+
+        # For tiled window swap step & debounce
+        self.tile_drag_origin_x = 0.0
+        self.tile_drag_origin_y = 0.0
+        self.last_swap_time = 0.0
+
+        # Cached monitor geometry
+        self.mon_cache_time = 0
+        self.mon_info = None
+
+    def get_monitor_info(self):
+        now = time.time()
+        if now - self.mon_cache_time > 2.0 or not self.mon_info:
+            mon = get_edp1_monitor()
+            if mon:
+                scale = float(mon.get("scale", 1.0))
+                self.mon_info = {
+                    "x": float(mon.get("x", 0)),
+                    "y": float(mon.get("y", 0)),
+                    "width": float(mon.get("width", 2560)) / scale,
+                    "height": float(mon.get("height", 1600)) / scale,
+                    "transform": int(mon.get("transform", 0)),
+                }
+                self.mon_cache_time = now
+        return self.mon_info
+
+    def raw_to_canvas(self, rx, ry):
+        mon = self.get_monitor_info()
+        if not mon:
+            return 0.0, 0.0
+
+        nx = max(0.0, min(1.0, rx / self.raw_max_x))
+        ny = max(0.0, min(1.0, ry / self.raw_max_y))
+        tr = mon["transform"]
+
+        if tr == 1:       # 90 deg clockwise
+            sx = ny * mon["width"]
+            sy = (1.0 - nx) * mon["height"]
+        elif tr == 2:     # 180 deg
+            sx = (1.0 - nx) * mon["width"]
+            sy = (1.0 - ny) * mon["height"]
+        elif tr == 3:     # 270 deg
+            sx = (1.0 - ny) * mon["width"]
+            sy = nx * mon["height"]
+        else:             # 0 normal
+            sx = nx * mon["width"]
+            sy = ny * mon["height"]
+
+        return mon["x"] + sx, mon["y"] + sy
+
+    def cancel_timer(self):
+        with self.state_lock:
+            if self.timer:
+                self.timer.cancel()
+                self.timer = None
+
+    def on_hold_timeout(self, win):
+        with self.state_lock:
+            self.timer = None
+
+            if len(self.slots) != 1:
+                return
+
+            self.is_floating = win.get("floating", False)
+            title = win.get("title", "") or win.get("class", "window")
+            mode_str = "Floating" if self.is_floating else "Tile"
+            log(f"Hold reached on '{title}' [{mode_str}]")
+
+            wx, wy = win["at"]
+
+            # Floating setup
+            self.offset_x = self.current_canvas_x - wx
+            self.offset_y = self.current_canvas_y - wy
+            self.last_dispatched_x = int(wx)
+            self.last_dispatched_y = int(wy)
+            self.last_dispatch_time = time.time()
+
+            # Tiled setup
+            self.tile_drag_origin_x = self.current_canvas_x
+            self.tile_drag_origin_y = self.current_canvas_y
+            self.last_swap_time = time.time()
+
+            self.is_grabbed = True
+            self.grabbed_window_addr = win.get("address")
+
+        if self.is_floating:
+            hypr_notify("✥ Move Window (Drag freely)", ms=1000)
+        else:
+            hypr_notify("✥ Move Tile (Drag toward target)", ms=1000)
+
+        log(f"Grab active! Window stays {mode_str}.")
+
+    def handle_touch_down(self, cx, cy):
+        with self.state_lock:
+            if self.timer:
+                self.timer.cancel()
+                self.timer = None
+            self.is_grabbed = False
+
+        if len(self.slots) != 1:
+            return
+
+        win = get_active_window()
+        if not win:
+            return
+
+        wx, wy = win["at"]
+        ww, wh = win["size"]
+
+        # Check if touch is within top grab strip of active window
+        if wx <= cx <= wx + ww and wy <= cy <= wy + TOP_MARGIN_PX:
+            self.start_canvas_x = cx
+            self.start_canvas_y = cy
+            self.current_canvas_x = cx
+            self.current_canvas_y = cy
+
+            log(f"Touch down in header zone at ({cx:.1f}, {cy:.1f}), starting {HOLD_DURATION_SEC*1000:.0f}ms timer")
+            with self.state_lock:
+                self.timer = threading.Timer(HOLD_DURATION_SEC, self.on_hold_timeout, args=[win])
+                self.timer.daemon = True
+                self.timer.start()
+
+    def handle_touch_move(self, cx, cy):
+        self.current_canvas_x = cx
+        self.current_canvas_y = cy
+
+        with self.state_lock:
+            pending_timer = self.timer
+            currently_grabbed = self.is_grabbed
+
+        # If hold timer is pending, check for movement jitter
+        if pending_timer:
+            drift = math.hypot(cx - self.start_canvas_x, cy - self.start_canvas_y)
+            if drift > JITTER_THRESHOLD_PX:
+                log(f"Swipe detected ({drift:.1f}px > {JITTER_THRESHOLD_PX}px); canceling hold timer")
+                self.cancel_timer()
+
+        # If currently grabbed, handle movement based on window mode
+        elif currently_grabbed:
+            now = time.time()
+
+            if self.is_floating:
+                # Floating: update pixel coordinates smoothly (~80Hz)
+                if now - self.last_dispatch_time < 0.012:
+                    return
+
+                target_x = int(cx - self.offset_x)
+                target_y = int(cy - self.offset_y)
+
+                if abs(target_x - self.last_dispatched_x) >= 2 or abs(target_y - self.last_dispatched_y) >= 2:
+                    lua_cmd = f'eval return hl.dispatch(hl.dsp.window.move({{ x = {target_x}, y = {target_y}, relative = false }}))'
+                    hypr_ipc(lua_cmd)
+                    self.last_dispatched_x = target_x
+                    self.last_dispatched_y = target_y
+                    self.last_dispatch_time = now
+
+            else:
+                # Tiled: swap window within the tiling layout
+                # Debounce swaps by 220ms
+                if now - self.last_swap_time < 0.22:
+                    return
+
+                dx = cx - self.tile_drag_origin_x
+                dy = cy - self.tile_drag_origin_y
+
+                if abs(dx) >= abs(dy):
+                    if dx >= TILE_SWAP_THRESHOLD_PX:
+                        log("Tiled drag -> swap right")
+                        hypr_ipc('eval return hl.dispatch(hl.dsp.window.swap({ direction = "r" }))')
+                        hypr_notify("✥ Swapped Right", ms=400)
+                        self.tile_drag_origin_x = cx
+                        self.tile_drag_origin_y = cy
+                        self.last_swap_time = now
+                    elif dx <= -TILE_SWAP_THRESHOLD_PX:
+                        log("Tiled drag -> swap left")
+                        hypr_ipc('eval return hl.dispatch(hl.dsp.window.swap({ direction = "l" }))')
+                        hypr_notify("✥ Swapped Left", ms=400)
+                        self.tile_drag_origin_x = cx
+                        self.tile_drag_origin_y = cy
+                        self.last_swap_time = now
+                else:
+                    if dy >= TILE_SWAP_THRESHOLD_PX:
+                        log("Tiled drag -> swap down")
+                        hypr_ipc('eval return hl.dispatch(hl.dsp.window.swap({ direction = "d" }))')
+                        hypr_notify("✥ Swapped Down", ms=400)
+                        self.tile_drag_origin_x = cx
+                        self.tile_drag_origin_y = cy
+                        self.last_swap_time = now
+                    elif dy <= -TILE_SWAP_THRESHOLD_PX:
+                        log("Tiled drag -> swap up")
+                        hypr_ipc('eval return hl.dispatch(hl.dsp.window.swap({ direction = "u" }))')
+                        hypr_notify("✥ Swapped Up", ms=400)
+                        self.tile_drag_origin_x = cx
+                        self.tile_drag_origin_y = cy
+                        self.last_swap_time = now
+
+    def handle_touch_up(self):
+        self.cancel_timer()
+        with self.state_lock:
+            if self.is_grabbed:
+                log("Touch released; window placement complete")
+                self.is_grabbed = False
+                self.grabbed_window_addr = None
+                hypr_notify("✓ Placed", ms=400, color="rgb(a3be8c)")
 
 def main():
-    print("[TouchDaemon] Starting touchscreen gesture daemon...", flush=True)
-    device_path, device_name = None, None
+    print("[TouchDrag] Starting Touch Window Drag Daemon...", flush=True)
+
+    dev_path, dev_name, max_x, max_y = None, None, 3408, 2064
     for _ in range(15):
-        device_path, device_name = find_real_touch_device()
-        if device_path:
+        dev_path, dev_name, max_x, max_y = find_touchscreen_device()
+        if dev_path:
             break
         time.sleep(1)
 
-    if not device_path:
-        print("[TouchDaemon Error] No touchscreen device found!", flush=True)
+    if not dev_path:
+        print("[TouchDrag Error] No touchscreen device detected!", flush=True)
         sys.exit(1)
 
-    print(f"[TouchDaemon] Bound to {device_name} ({device_path})", flush=True)
+    print(f"[TouchDrag] Bound to {dev_name} ({dev_path}) [{max_x}x{max_y}]", flush=True)
 
     try:
-        dev = InputDevice(device_path)
+        dev = InputDevice(dev_path)
     except Exception as e:
-        print(f"[TouchDaemon Error] Could not open device: {e}", flush=True)
+        print(f"[TouchDrag Error] Could not open {dev_path}: {e}", flush=True)
         sys.exit(1)
 
-    slots = {}
+    manager = TouchWindowDragManager(max_x, max_y)
     current_slot = 0
-    max_fingers = 0
-    start_x, start_y = 0, 0
-    last_x, last_y = 0, 0
-    gesture_fired = False
-    touch_active = False
 
     for event in dev.read_loop():
         if event.type == ecodes.EV_ABS:
@@ -316,108 +582,59 @@ def main():
                 current_slot = event.value
             elif event.code == ecodes.ABS_MT_TRACKING_ID:
                 if event.value == -1:
-                    slots.pop(current_slot, None)
+                    manager.slots.pop(current_slot, None)
                 else:
-                    slots[current_slot] = {'x': 0, 'y': 0}
+                    # New finger down
+                    manager.slots[current_slot] = {"x": 0, "y": 0, "new": True}
             elif event.code == ecodes.ABS_MT_POSITION_X:
-                if current_slot in slots:
-                    slots[current_slot]['x'] = event.value
+                if current_slot in manager.slots:
+                    manager.slots[current_slot]["x"] = event.value
             elif event.code == ecodes.ABS_MT_POSITION_Y:
-                if current_slot in slots:
-                    slots[current_slot]['y'] = event.value
+                if current_slot in manager.slots:
+                    manager.slots[current_slot]["y"] = event.value
 
-        elif event.type == ecodes.EV_SYN:
-            if event.code == ecodes.SYN_REPORT:
-                active_count = len(slots)
+        elif event.type == ecodes.EV_SYN and event.code == ecodes.SYN_REPORT:
+            active_count = len(manager.slots)
 
-                if active_count > 0:
-                    xs = [s['x'] for s in slots.values() if s['x'] > 0]
-                    ys = [s['y'] for s in slots.values() if s['y'] > 0]
+            if active_count == 1:
+                slot_data = next(iter(manager.slots.values()))
+                rx = slot_data["x"]
+                ry = slot_data["y"]
+                if rx > 0 and ry > 0:
+                    cx, cy = manager.raw_to_canvas(rx, ry)
+                    if slot_data.get("new", False):
+                        slot_data["new"] = False
+                        manager.handle_touch_down(cx, cy)
+                    else:
+                        manager.handle_touch_move(cx, cy)
 
-                    if xs and ys:
-                        cx = sum(xs) / len(xs)
-                        cy = sum(ys) / len(ys)
+            elif active_count == 0:
+                manager.handle_touch_up()
 
-                        if not touch_active:
-                            touch_active = True
-                            max_fingers = active_count
-                            start_x, start_y = cx, cy
-                            last_x, last_y = cx, cy
-                            gesture_fired = False
-                        else:
-                            max_fingers = max(max_fingers, active_count)
-                            last_x, last_y = cx, cy
+            else:
+                # Multi-finger -> cancel any drag/timer
+                manager.cancel_timer()
+                if manager.is_grabbed:
+                    manager.handle_touch_up()
 
-                        # Trigger gesture during active swipe once threshold is exceeded
-                        if not gesture_fired and max_fingers >= 3:
-                            raw_dx = last_x - start_x
-                            raw_dy = last_y - start_y
-                            dist = (raw_dx**2 + raw_dy**2)**0.5
-
-                            if dist >= THRESHOLD:
-                                transform = get_monitor_transform()
-                                dx, dy = adjust_for_transform(raw_dx, raw_dy, transform)
-                                abs_dx = abs(dx)
-                                abs_dy = abs(dy)
-
-                                if max_fingers == 4:
-                                    if abs_dx > abs_dy:
-                                        if dx > 0:
-                                            send_hypr_dispatch('hl.dsp.focus({ workspace = "r-1" })', "4-finger swipe right -> Prev Workspace")
-                                        else:
-                                            send_hypr_dispatch('hl.dsp.focus({ workspace = "r+1" })', "4-finger swipe left -> Next Workspace")
-                                    else:
-                                        if dy > 0:
-                                            send_hypr_dispatch('hl.dsp.window.fullscreen({ mode = 1 })', "4-finger swipe down -> Fullscreen toggle")
-                                        else:
-                                            send_hypr_dispatch('hl.dsp.window.float({ action = "toggle" })', "4-finger swipe up -> Float toggle")
-                                    gesture_fired = True
-
-                                elif max_fingers == 3:
-                                    if abs_dx > abs_dy:
-                                        if dx > 0:
-                                            send_hypr_dispatch('hl.dsp.focus({ direction = "l" })', "3-finger swipe right -> Focus Left")
-                                        else:
-                                            send_hypr_dispatch('hl.dsp.focus({ direction = "r" })', "3-finger swipe left -> Focus Right")
-                                    else:
-                                        if dy > 0:
-                                            send_hypr_dispatch('hl.dsp.focus({ direction = "d" })', "3-finger swipe down -> Focus Down")
-                                        else:
-                                            send_hypr_dispatch('hl.dsp.focus({ direction = "u" })', "3-finger swipe up -> Focus Up")
-                                    gesture_fired = True
-
-                                elif max_fingers == 5:
-                                    send_hypr_dispatch('hl.dsp.window.close()', "5-finger swipe/pinch -> Close Window")
-                                    gesture_fired = True
-
-                else:
-                    # Fingers released
-                    if touch_active:
-                        if not gesture_fired and max_fingers == 5:
-                            send_hypr_dispatch('hl.dsp.window.close()', "5-finger tap -> Close Window")
-
-                        touch_active = False
-                        max_fingers = 0
-                        gesture_fired = False
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
 EOF
-chmod +x ~/.config/hypr/touch_gestures.py
+chmod +x ~/.config/hypr/touch_window_drag.py
 ```
 
-#### B. Create & Enable User Service for Gestures
+#### B. Create & Enable User Service for Window Dragging
 
 ```bash
-cat << 'EOF' > ~/.config/systemd/user/touch-gestures.service
+cat << 'EOF' > ~/.config/systemd/user/touch-window-drag.service
 [Unit]
-Description=Touchscreen Gestures Daemon
+Description=Touchscreen Window Drag Daemon for Hyprland
 PartOf=graphical-session.target
 After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 %h/.config/hypr/touch_gestures.py
+ExecStart=/usr/bin/python3 %h/.config/hypr/touch_window_drag.py
 Restart=always
 RestartSec=2
 
@@ -426,7 +643,7 @@ WantedBy=graphical-session.target
 EOF
 
 systemctl --user daemon-reload
-systemctl --user enable --now touch-gestures.service
+systemctl --user enable --now touch-window-drag.service
 ```
 
 ---
@@ -644,12 +861,12 @@ rm -rf /tmp/wvkbd-src
 
    # User daemons
    systemctl --user status iio-hyprland.service
-   systemctl --user status touch-gestures.service
+   systemctl --user status touch-window-drag.service
    ```
 
-2. **Verify Gesture Logs in Real Time:**
+2. **Verify Window Drag Logs in Real Time:**
    ```bash
-   journalctl --user -u touch-gestures.service -f
+   journalctl --user -u touch-window-drag.service -f
    ```
 
 3. **Verify Battery Charge Threshold:**

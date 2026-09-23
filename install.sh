@@ -42,14 +42,15 @@ sudo usermod -aG input "$USER"
 sudo udevadm control --reload-rules
 sudo udevadm trigger
 
-# 5. Multi-Touch Gestures Daemon
-echo "[5/6] Setting up multi-touch gestures daemon..."
+# 5. Touch Window Drag Daemon (Long-press Header to Move/Swap Windows)
+echo "[5/6] Setting up touch window drag daemon..."
 mkdir -p ~/.config/hypr
-cp "${SCRIPT_DIR}/config/hypr/touch_gestures.py" ~/.config/hypr/touch_gestures.py
-chmod +x ~/.config/hypr/touch_gestures.py
-cp "${SCRIPT_DIR}/systemd/user/touch-gestures.service" ~/.config/systemd/user/touch-gestures.service
+cp "${SCRIPT_DIR}/config/hypr/touch_window_drag.py" ~/.config/hypr/touch_window_drag.py
+chmod +x ~/.config/hypr/touch_window_drag.py
+cp "${SCRIPT_DIR}/systemd/user/touch-window-drag.service" ~/.config/systemd/user/touch-window-drag.service
 systemctl --user daemon-reload
-systemctl --user enable --now touch-gestures.service
+systemctl --user enable --now touch-window-drag.service
+
 
 # 6. Build and Install Custom Virtual Keyboard
 echo "[6/6] Building and installing custom wvkbd-deskintl virtual keyboard..."
