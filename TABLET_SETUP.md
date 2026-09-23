@@ -35,9 +35,13 @@ This document provides a comprehensive record of all configurations, custom scri
    * 5-finger pinch/tap: Close active window.
    * Dynamic rotation compensation: Swiping physically "up" is always visually "up", even when rotated portrait or inverted.
 4. **Battery Health Optimization:**
-   * Charge limit set to **80%** to avoid cell degradation.
-   * Persisted via `asusd` (`asusctl battery limit 80`).
+   * Charge limit set to **60%** to avoid cell degradation while docked.
+   * Persisted via `asusd` (`asusctl battery limit 60`).
    * One-shot travel override: `asusctl battery oneshot 100`.
+5. **Desk Docking & Multi-Monitor Layout:**
+   * Dual 49" Samsung Odyssey G9s (`5120x1440 @ 120Hz`) stacked vertically (`DP-1` top, `DP-2` bottom).
+   * Tablet built-in display (`eDP-1`, 2560x1600) centered horizontally underneath the bottom G9.
+   * Dynamic coordinate formulas in `~/.config/hypr/monitors.lua` prevent monitor overlap warnings regardless of scaling.
 
 ---
 
@@ -112,8 +116,8 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable --now asusd
 
-# 3. Set battery charging threshold to 80%
-asusctl battery limit 80
+# 3. Set battery charging threshold to 60%
+asusctl battery limit 60
 ```
 
 Verify with:
@@ -661,3 +665,64 @@ rm -rf /tmp/wvkbd-src
    * Test Bitwarden panel: Press `SUPER + B` to toggle the status bar Bitwarden vault.
    * Test virtual keyboard: Click the physical tablet side button (`XF86Launch3`).
    * Verify location: `which wvkbd-deskintl` should print `/home/<user>/.local/bin/wvkbd-deskintl`.
+
+---
+
+## 7. Desk Docking & Multi-Monitor Configuration
+
+When docked at the desk, the setup uses two 49″ Samsung Odyssey G9s stacked vertically, with the built-in tablet display positioned centered directly beneath them.
+
+### Layout Topology:
+```
+                  ┌───────────────────────────────┐
+                  │       Top G9 (DP-1)           │
+                  │        (X=0, Y=0)             │
+                  └───────────────────────────────┘
+                  ┌───────────────────────────────┐
+                  │      Bottom G9 (DP-2)         │
+                  │       (X=0, Y=g9_h)           │
+                  └───────────────────────────────┘
+                               ┌─────────────┐
+                               │   Laptop    │
+                               │  (Centered, │
+                               │ Y=2 * g9_h) │
+                               └─────────────┘
+```
+
+### Critical: Dynamic Coordinate Calculation (Preventing Monitor Overlap)
+In Hyprland, canvas coordinates are **logical pixels** ($\text{logical} = \text{native} / \text{scale}$). 
+If coordinate positions are hardcoded (e.g., $Y=1152$ calculated for scale 1.25) and the user switches to scale 1.0 (where native height is 1440), the top and bottom monitors will **overlap by 288 pixels**, causing Hyprland to throw a persistent overlap warning.
+
+To permanently prevent this, `~/.config/hypr/monitors.lua` dynamically computes all canvas positions directly from `omarchy_monitor_scale`:
+
+```lua
+-- ~/.config/hypr/monitors.lua
+local omarchy_gdk_scale = 1
+local omarchy_monitor_scale = 1
+
+hl.env("GDK_SCALE", tostring(omarchy_gdk_scale))
+
+-- Calculate logical dimensions based on scale
+local g9_w = 5120 / omarchy_monitor_scale
+local g9_h = 1440 / omarchy_monitor_scale
+local laptop_w = 2560 / omarchy_monitor_scale
+
+local bot_pos = string.format("0x%d", math.floor(g9_h))
+local laptop_x = math.floor((g9_w - laptop_w) / 2)
+local laptop_y = math.floor(g9_h * 2)
+local laptop_pos = string.format("%dx%d", laptop_x, laptop_y)
+
+-- Top 49" Odyssey G9
+hl.monitor({ output = "DP-1", mode = "5120x1440@120", position = "0x0", scale = omarchy_monitor_scale })
+
+-- Bottom 49" Odyssey G9
+hl.monitor({ output = "DP-2", mode = "5120x1440@120", position = bot_pos, scale = omarchy_monitor_scale })
+
+-- Laptop centered beneath the bottom G9
+hl.monitor({ output = "eDP-1", mode = "preferred", position = laptop_pos, scale = omarchy_monitor_scale })
+
+-- Fallback for any other output
+hl.monitor({ output = "", mode = "preferred", position = "auto", scale = omarchy_monitor_scale })
+```
+
+Whenever `omarchy_monitor_scale` is modified, the canvas boundaries automatically recalculate to maintain seamless, zero-overlap alignment across all three displays.
