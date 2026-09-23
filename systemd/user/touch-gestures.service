@@ -1,0 +1,13 @@
+[Unit]
+Description=Touchscreen Gestures Daemon
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/jason/.config/hypr/touch_gestures.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

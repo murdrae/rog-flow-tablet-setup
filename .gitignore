@@ -1,0 +1,7 @@
+# Build artifacts & temp files
+*.o
+*.log
+*~
+*.swp
+__pycache__/
+*.pyc
