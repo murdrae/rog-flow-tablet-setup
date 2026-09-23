@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Touch Window Drag Daemon for Hyprland on ASUS ROG Flow Z13.
+Touch Window Drag & Close Daemon for Hyprland on ASUS ROG Flow Z13.
 
-Allows moving windows within the tiling layout or floating coordinates
-without a title bar by holding still in the top strip for 300ms.
+Features:
+1. Hold still in the top strip (60px) for 300ms to grab and drag/swap windows.
+2. Double-tap the top-right corner (65x65px) to close the active window.
 """
 
 import os
@@ -20,6 +21,11 @@ HOLD_DURATION_SEC = 0.30       # Hold time required to initiate grab (300ms)
 TOP_MARGIN_PX = 60             # Height of top grab strip (in logical pixels)
 JITTER_THRESHOLD_PX = 40.0     # Allowable finger drift during hold (contact settling)
 TILE_SWAP_THRESHOLD_PX = 45.0  # Drag distance to trigger a swap in the tiling grid
+
+# Corner Close Configuration
+CORNER_CLOSE_SIZE_PX = 65.0    # 65x65px square in top-right corner of window
+DOUBLE_TAP_MAX_DELAY = 0.35    # Max time between taps for a double-tap (350ms)
+
 DEBUG_LOGS = True              # Print debug logs to journal
 # =================================================
 
@@ -127,6 +133,11 @@ class TouchWindowDragManager:
         self.current_canvas_x = 0.0
         self.current_canvas_y = 0.0
 
+        # Corner Double-Tap Close State
+        self.touch_started_in_corner = False
+        self.last_corner_tap_time = 0.0
+        self.last_corner_tap_addr = None
+
         # For floating window dragging
         self.offset_x = 0.0
         self.offset_y = 0.0
@@ -231,6 +242,7 @@ class TouchWindowDragManager:
                 self.timer.cancel()
                 self.timer = None
             self.is_grabbed = False
+            self.touch_started_in_corner = False
 
         if len(self.slots) != 1:
             return
@@ -249,7 +261,12 @@ class TouchWindowDragManager:
             self.current_canvas_x = cx
             self.current_canvas_y = cy
 
-            log(f"Touch down in header zone at ({cx:.1f}, {cy:.1f}), starting {HOLD_DURATION_SEC*1000:.0f}ms timer")
+            # Check if this touch is specifically in the top-right corner (close target)
+            is_corner = (wx + ww - CORNER_CLOSE_SIZE_PX <= cx <= wx + ww) and (wy <= cy <= wy + CORNER_CLOSE_SIZE_PX)
+            self.touch_started_in_corner = is_corner
+            self.active_window_addr = win.get("address")
+
+            log(f"Touch down in header zone at ({cx:.1f}, {cy:.1f}) [corner={is_corner}], starting {HOLD_DURATION_SEC*1000:.0f}ms timer")
             with self.state_lock:
                 self.timer = threading.Timer(HOLD_DURATION_SEC, self.on_hold_timeout, args=[win])
                 self.timer.daemon = True
@@ -269,6 +286,7 @@ class TouchWindowDragManager:
             if drift > JITTER_THRESHOLD_PX:
                 log(f"Swipe detected ({drift:.1f}px > {JITTER_THRESHOLD_PX}px); canceling hold timer")
                 self.cancel_timer()
+                self.touch_started_in_corner = False
 
         # If currently grabbed, handle movement based on window mode
         elif currently_grabbed:
@@ -291,7 +309,6 @@ class TouchWindowDragManager:
 
             else:
                 # Tiled: swap window within the tiling layout
-                # Debounce swaps by 220ms
                 if now - self.last_swap_time < 0.22:
                     return
 
@@ -330,16 +347,37 @@ class TouchWindowDragManager:
                         self.last_swap_time = now
 
     def handle_touch_up(self):
+        was_timer_active = (self.timer is not None)
         self.cancel_timer()
+
         with self.state_lock:
-            if self.is_grabbed:
+            was_grabbed = self.is_grabbed
+            started_in_corner = self.touch_started_in_corner
+            win_addr = self.active_window_addr
+
+            if was_grabbed:
                 log("Touch released; window placement complete")
                 self.is_grabbed = False
                 self.grabbed_window_addr = None
                 hypr_notify("✓ Placed", ms=400, color="rgb(a3be8c)")
+                return
+
+        # Check for Double-Tap in Top-Right Corner (quick tap, timer didn't expire, didn't grab)
+        if started_in_corner and was_timer_active:
+            now = time.time()
+            if (now - self.last_corner_tap_time) <= DOUBLE_TAP_MAX_DELAY and self.last_corner_tap_addr == win_addr:
+                log("Double-tap in top-right corner -> Closing window!")
+                hypr_ipc('eval return hl.dispatch(hl.dsp.window.close())')
+                hypr_notify("✕ Closed Window", ms=600, color="rgb(bf616a)")
+                self.last_corner_tap_time = 0.0
+                self.last_corner_tap_addr = None
+            else:
+                log("Corner tap 1 recorded; waiting for tap 2")
+                self.last_corner_tap_time = now
+                self.last_corner_tap_addr = win_addr
 
 def main():
-    print("[TouchDrag] Starting Touch Window Drag Daemon...", flush=True)
+    print("[TouchDrag] Starting Touch Window Drag & Close Daemon...", flush=True)
 
     dev_path, dev_name, max_x, max_y = None, None, 3408, 2064
     for _ in range(15):
@@ -371,7 +409,6 @@ def main():
                 if event.value == -1:
                     manager.slots.pop(current_slot, None)
                 else:
-                    # New finger down
                     manager.slots[current_slot] = {"x": 0, "y": 0, "new": True}
             elif event.code == ecodes.ABS_MT_POSITION_X:
                 if current_slot in manager.slots:
@@ -399,7 +436,6 @@ def main():
                 manager.handle_touch_up()
 
             else:
-                # Multi-finger -> cancel any drag/timer
                 manager.cancel_timer()
                 if manager.is_grabbed:
                     manager.handle_touch_up()
