@@ -27,7 +27,8 @@ This document provides a comprehensive record of all configurations, custom scri
    * **Bottom-Left Corner:** Standard PC keyboard layout (`[Ctr] [Sup] [Alt]`).
    * **Clean & Extra-Wide Spacebar:** Width expanded to 8.5 for effortless thumb typing.
    * **Unused Keys Removed:** Unnecessary `Cmp` (Compose), `AGr` (AltGr), and duplicate right `Ctrl` removed.
-   * Toggled via `SUPER + B` or the tablet physical side button (`XF86Launch3`).
+   * Toggled via the tablet physical side button (`XF86Launch3`).
+   * `SUPER + B` is mapped to toggle the status bar Bitwarden vault plugin (`io.github.elevate08.qs-bitwarden-cli`).
 3. **Multi-Touch Gestures Daemon:**
    * 4-finger swipes: Switch workspaces, toggle fullscreen, toggle floating/tiling.
    * 3-finger swipes: Directional focus movement (left, right, down, up).
@@ -192,12 +193,14 @@ hl.config({
 })
 ```
 
-#### B. Configure Virtual Keyboard Shortcuts
+#### B. Configure Keybindings
 Add the following to `~/.config/hypr/bindings.lua`:
 
 ```lua
--- Tablet On-Screen Virtual Keyboard Toggle
-o.bind("SUPER + B", "Toggle virtual keyboard", "pkill -x wvkbd-deskintl || pkill -x wvkbd-mobintl || /home/jason/.local/bin/wvkbd-deskintl -L 360")
+-- Bitwarden status bar plugin toggle
+o.bind("SUPER + B", "Bitwarden vault", "omarchy-shell io.github.elevate08.qs-bitwarden-cli toggle")
+
+-- Tablet On-Screen Virtual Keyboard Toggle (deskintl has Sup/Ctrl/Alt on the main screen)
 o.bind("XF86Launch3", "Toggle virtual keyboard", "pkill -x wvkbd-deskintl || pkill -x wvkbd-mobintl || /home/jason/.local/bin/wvkbd-deskintl -L 360", { locked = true })
 ```
 
@@ -654,7 +657,7 @@ rm -rf /tmp/wvkbd-src
    asusctl battery info
    ```
 
-4. **Verify On-Screen Keyboard:**
-   * Test via keybinding: Press `SUPER + B`.
-   * Test via hardware button: Click the physical tablet side button.
+4. **Verify On-Screen Keyboard & Bitwarden Plugin:**
+   * Test Bitwarden panel: Press `SUPER + B` to toggle the status bar Bitwarden vault.
+   * Test virtual keyboard: Click the physical tablet side button (`XF86Launch3`).
    * Verify location: `which wvkbd-deskintl` should print `/home/<user>/.local/bin/wvkbd-deskintl`.
