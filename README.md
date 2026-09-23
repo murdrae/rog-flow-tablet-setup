@@ -203,7 +203,7 @@ Add the following to `~/.config/hypr/bindings.lua`:
 o.bind("SUPER + B", "Bitwarden vault", "omarchy-shell io.github.elevate08.qs-bitwarden-cli toggle")
 
 -- Tablet On-Screen Virtual Keyboard Toggle (deskintl has Sup/Ctrl/Alt on the main screen)
-o.bind("XF86Launch3", "Toggle virtual keyboard", "pkill -x wvkbd-deskintl || pkill -x wvkbd-mobintl || wvkbd-deskintl -L 360", { locked = true })
+o.bind("XF86Launch3", "Toggle virtual keyboard", "pkill -x wvkbd-deskintl || pkill -x wvkbd-mobintl || /home/jason/.local/bin/wvkbd-deskintl -L 360", { locked = true })
 ```
 
 ---
