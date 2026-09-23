@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "user.dictation",
+  "name": "Dictation",
+  "version": "1.0.0",
+  "author": "jason",
+  "description": "Tap to toggle Voxtype speech dictation",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "DictationWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Dictation",
+    "description": "Tap to start or stop Voxtype speech dictation",
+    "category": "Input",
+    "allowMultiple": false
+  }
+}

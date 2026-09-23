@@ -34,3 +34,7 @@ o.bind("SUPER + B", "Bitwarden vault", "omarchy-shell io.github.elevate08.qs-bit
 -- Tablet On-Screen Virtual Keyboard Toggle (deskintl has Sup/Ctrl/Alt on the main screen)
 o.bind("XF86Launch3", "Toggle virtual keyboard", "pkill -x wvkbd-deskintl || pkill -x wvkbd-mobintl || /home/jason/.local/bin/wvkbd-deskintl -L 360", { locked = true })
 
+-- Dictation toggle (physical Copilot key on detachable keyboard, or virtual keyboard mic key)
+o.bind("SUPER + SHIFT + F23", "Toggle dictation", "voxtype record toggle", { locked = true })
+o.bind("XF86AudioRecord", "Toggle dictation", "voxtype record toggle", { locked = true })
+

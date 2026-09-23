@@ -53,7 +53,7 @@ systemctl --user enable --now touch-window-drag.service
 
 
 # 6. Build and Install Custom Virtual Keyboard
-echo "[6/6] Building and installing custom wvkbd-deskintl virtual keyboard..."
+echo "[6/7] Building and installing custom wvkbd-deskintl virtual keyboard..."
 BUILD_DIR="$(mktemp -d /tmp/wvkbd-build-XXXXXX)"
 git clone --depth 1 https://github.com/jjsullivan5196/wvkbd.git "${BUILD_DIR}"
 python3 "${SCRIPT_DIR}/wvkbd/patch_layout.py" "${BUILD_DIR}/layout.deskintl.h"
@@ -62,6 +62,14 @@ mkdir -p ~/.local/bin
 cp "${BUILD_DIR}/wvkbd-deskintl" ~/.local/bin/wvkbd-deskintl
 chmod 755 ~/.local/bin/wvkbd-deskintl
 rm -rf "${BUILD_DIR}"
+
+# 7. Install Omarchy Status Bar Dictation Widget
+echo "[7/7] Installing Omarchy status bar dictation widget..."
+mkdir -p ~/.config/omarchy/plugins/user.dictation
+cp -r "${SCRIPT_DIR}/config/omarchy/plugins/user.dictation/"* ~/.config/omarchy/plugins/user.dictation/
+if command -v omarchy &>/dev/null; then
+    omarchy bar put user.dictation --after omarchy.clock 2>/dev/null || omarchy plugin enable user.dictation 2>/dev/null || true
+fi
 
 echo "=== Installation Complete! ==="
 echo "Note: Remember to add the tablet config snippets from config/hypr/ to ~/.config/hypr/."

@@ -25,11 +25,16 @@ This document provides a comprehensive record of all configurations, custom scri
    * `Esc` key on the number row (with Shift giving `~` / `` ` ``).
    * **Layer Switch Key (`[ ⌨ ]`):** Located on the left side of the home row (above `Shift`, replacing the unused `Cmp`/Compose key).
    * **Bottom-Left Corner:** Standard PC keyboard layout (`[Ctr] [Sup] [Alt]`).
-   * **Clean & Extra-Wide Spacebar:** Width expanded to 8.5 for effortless thumb typing.
+   * **Dedicated Dictation Key (`[ 🎙 ]`):** Positioned next to the spacebar to trigger Voxtype speech dictation with one tap.
+   * **Clean & Extra-Wide Spacebar:** Width expanded to 7.5 for effortless thumb typing.
    * **Unused Keys Removed:** Unnecessary `Cmp` (Compose), `AGr` (AltGr), and duplicate right `Ctrl` removed.
    * Toggled via the tablet physical side button (`XF86Launch3`).
    * `SUPER + B` is mapped to toggle the status bar Bitwarden vault plugin (`io.github.elevate08.qs-bitwarden-cli`).
-3. **Touch Window Drag & Close Daemon:**
+3. **Tap-to-Dictate Status Bar Widget (`user.dictation`):**
+   * Sits in the top Omarchy status bar for instant voice access without opening the keyboard.
+   * Live status feedback: dim when idle (`󰍬`), brightly active when recording, spinner when transcribing (`󰔟`).
+   * Tap to start or stop; right-click to abort.
+4. **Touch Window Drag & Close Daemon:**
    * **Hold to Grab**: Press and hold still in the top ~60px header strip of any window for 300ms to grab it.
    * **Tiled Windows**: Dragging toward an adjacent window (left, right, up, down) swaps tiles directly in the layout tree (`hl.dsp.window.swap`). Windows remain 100% tiled.
    * **Floating Windows**: Drags smoothly across screen by pixel coordinates.
@@ -72,7 +77,7 @@ The customized `wvkbd-deskintl` binary is located at `~/.local/bin/wvkbd-deskint
 * **Row 2 (QWERTY):** `[Tab]` `q` `w` `e` `r` `t` `y` `u` `i` `o` `p` `[` `]` `\`
 * **Row 3 (Home Row):** `[ ⌨ ]` `[Caps]` `a` `s` `d` `f` `g` `h` `j` `k` `l` `;` `'` `[Enter]`
 * **Row 4 (Shift / Nav):** `[ ⇧ ]` `z` `x` `c` `v` `b` `n` `m` `,` `.` `/` `[↑]` `[ ⇧ ]`
-* **Row 5 (Bottom Row):** `[Ctr]` `[Sup]` `[Alt]` `[             Space (8.5)             ]` `[←]` `[↓]` `[→]`
+* **Row 5 (Bottom Row):** `[Ctr]` `[Sup]` `[Alt]` `[ 🎙 ]` `[           Space (7.5)           ]` `[←]` `[↓]` `[→]`
 
 ### B. Secondary Layer (`Special` - Non-Alpha Characters, Symbols & Nav):
 Accessed by tapping `[ ⌨ ]` on the left of Row 3. Tap `[Abc]` in that exact same position to return to letters.
@@ -80,7 +85,7 @@ Accessed by tapping `[ ⌨ ]` on the left of Row 3. Tap `[Abc]` in that exact sa
 * **Row 2 (Direct Symbols):** `[Tab]` `~` `!` `@` `#` `$` `%` `^` `&` `*` `(` `)` `_` `+`
 * **Row 3 (Brackets & Quotes):** `[Abc]` `[Del]` `` ` `` `[` `]` `{` `}` `\` `|` `;` `:` `'` `"` `[Enter]`
 * **Row 4 (Math & Currency):** `[ ⇧ ]` `<` `>` `/` `?` `=` `€` `£` `¥` `°` `±` `[PgUp]` `[Ins]`
-* **Row 5 (Nav & Modifiers):** `[Ctr]` `[Sup]` `[Alt]` `[             Space (8.5)             ]` `[Home]` `[PgDn]` `[End]`
+* **Row 5 (Nav & Modifiers):** `[Ctr]` `[Sup]` `[Alt]` `[ 🎙 ]` `[           Space (7.5)           ]` `[Home]` `[PgDn]` `[End]`
 
 ---
 
