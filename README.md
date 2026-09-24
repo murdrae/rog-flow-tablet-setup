@@ -183,13 +183,14 @@ sudo udevadm trigger
 
 ### Step 5: Hyprland Lua Configuration Updates
 
-#### A. Lock Touch Input to the Built-in Screen
+#### A. Lock Touch Input to the Built-in Screen & Dialog Focus Handling
 Add the following to `~/.config/hypr/input.lua`:
 
 ```lua
--- Tablet and Touchscreen input mapping to built-in display
+-- Tablet and Touchscreen input mapping to built-in display + prevent focus stealing on floating popups
 hl.config({
   input = {
+    float_switch_override_focus = 0,
     touchdevice = {
       output = "eDP-1",
     },
@@ -209,6 +210,15 @@ o.bind("SUPER + B", "Bitwarden vault", "omarchy-shell io.github.elevate08.qs-bit
 
 -- Tablet On-Screen Virtual Keyboard Toggle (deskintl has Sup/Ctrl/Alt on the main screen)
 o.bind("XF86Launch3", "Toggle virtual keyboard", "pkill -x wvkbd-deskintl || pkill -x wvkbd-mobintl || /home/jason/.local/bin/wvkbd-deskintl -L 360", { locked = true })
+```
+
+#### C. Application Window Rules (TradingView / Dialog Focus)
+Add the following to `~/.config/hypr/hyprland.lua`:
+
+```lua
+-- TradingView: Disable follow-mouse focus so hovering over the chart doesn't steal focus
+-- from confirmation dialogs ("Close all", "Save") and cause them to close prematurely.
+o.window("^tradingview$", { no_follow_mouse = true })
 ```
 
 ---

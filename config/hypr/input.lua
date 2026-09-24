@@ -2,6 +2,7 @@
 -- Append or merge into ~/.config/hypr/input.lua
 hl.config({
   input = {
+    float_switch_override_focus = 0,
     touchdevice = {
       output = "eDP-1",
     },
